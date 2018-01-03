@@ -104,28 +104,14 @@ def negTS(ns, S, B):
  
     N = float(len(S))
 
-    #print "N ", N
-    #print "ns ", ns 
-    #print "before log ", ns/N*S + (1.-ns/N)*B
-    #print "log ", np.log(ns/N*S + (1.-ns/N)*B)
-
     X = 1./N * (S/B-1)
     ts = 2*np.sum(np.log(ns*X+1))
-
-    #print "X ", X
-    #print "ts ", ts
     
-    llh = np.sum(np.log(ns/N*S + (1.-(ns/N))*B))
-    llh0 = np.sum(np.log(B))
-
-    #print "ns/N*S ", ns/N*S
-    #print "ns/N*S + (1.-(ns/N))*B ", ns/N*S + (1.-(ns/N))*B
-    #print "llh, llh0 ", llh, llh0
-
-    ts1 = 2*(llh-llh0)
+    #llh = np.sum(np.log(ns/N*S + (1.-(ns/N))*B))
+    #llh0 = np.sum(np.log(B))
+    #ts = 2*(llh-llh0)
     
-    print "ns, TS ", ns, ts, ts1
-    #exit()
+    print "ns, TS ", ns, ts
     return -ts
 
 
@@ -143,7 +129,6 @@ def TS(ra, dec, t0, lc, nuData):
         print "no neutrinos found."
     
     coszen = np.cos(utils.dec_to_zen(nu['dec']))
-    #B = (10 ** (coszen_spline(coszen))) / (np.pi*np.deg2rad(5)**2)
     B = (10 ** (coszen_spline(coszen))) /(2. * np.pi) 
    
     coszenS = np.cos(utils.dec_to_zen(dec))
@@ -228,7 +213,7 @@ if __name__ == '__main__':
 
     print 'splinename', spline_name
    
-    if 0:#not os.path.exists('coszen_spl%s.npy'%spline_name) or \
+    if 1:#not os.path.exists('coszen_spl%s.npy'%spline_name) or \
         #not os.path.exists('E_spline.npy%s'%spline_name) or \
         #not os.path.exists('coszen_signal_spl%s.npy'%spline_name):
             print('Create New Splines..')
