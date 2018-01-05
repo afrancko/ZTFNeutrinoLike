@@ -48,7 +48,7 @@ settings = {'E_reco': 'logE',#'muex',
             #'ftype_muon': 'GaisserH3a', #???????
             'Nsim': 50000,
             'Phi0': 0.91,
-            'maxDist':np.deg2rad(5),
+            'maxDist':np.deg2rad(1800),
             'E_weights': True} 
 
 addinfo = 'test'
@@ -78,15 +78,19 @@ def readLCCat():
 # get neutrinos close to source
 def get_neutrinos(ra, dec, t0, tmax, nuData):
 
-    print t0, tmax
+    #print t0, tmax
     
     dist = GreatCircleDistance(nuData['ra'],
                                nuData['dec'],
                                ra, dec)
     mask = dist < settings['maxDist']
 
+    #print "N events ", len(nuData)
+    
     nuDataClose = nuData[mask]
-        
+
+    #print "After space cut ", len(nuDataClose)
+    
     if len(nuDataClose) == 0:
         print "no neutrino found within %.1f degrees"%(np.rad2deg(settings['maxDist']))
 
@@ -97,6 +101,8 @@ def get_neutrinos(ra, dec, t0, tmax, nuData):
 
     nuDataClose = nuDataClose[maskT0]# | maskTmax]
 
+    #print "After time cut ", len(nuDataClose)
+    
     if len(nuDataClose) == 0:
         print "no neutrino found within 100 days from t0=%f"%t0
 
@@ -108,8 +114,8 @@ def negTS(ns, S, B):
  
     N = float(len(S))
     
-    if ns>=N:
-        return 1e6
+    #if ns>=N:
+    #    return 1e6
     
     llh = np.sum(np.log(ns/N*S + (1.-(ns/N))*B))
     llh0 = np.sum(np.log(B))
@@ -128,17 +134,21 @@ def TS(ra, dec, t0, lc, nuData):
         print "no neutrinos found."
     
     coszen = np.cos(utils.dec_to_zen(nu['dec']))
-    B = (10 ** (coszen_spline(coszen))) / (2 * np.pi) 
-   
+
+    # devide by 2 because we're only looking at 0.5 years of light curve data? Spline is derived from 1y of data?
+    B = (10 ** (coszen_spline(coszen)))  / (2 * np.pi) / 2.
+
+    #print B, np.sum(B)
+    
     coszenS = np.cos(utils.dec_to_zen(dec))
     acceptance = 10**coszen_signal_reco_spline(coszenS)
 
     S = 1./(2.*np.pi*nu['sigma']**2)*np.exp(-GreatCircleDistance(ra, dec, nu['ra'], nu['dec'])**2 / (2.*nu['sigma']**2)) * acceptance 
 
-    plt.figure()
-    plt.plot(nu['time'],np.log10(S/B),'ob')
-    plt.ylim(-10,10)
-    plt.savefig('plots/SoB_vs_time.png')
+    #plt.figure()
+    #plt.plot(nu['time'],np.log10(S/B),'ob')
+    #plt.ylim(-10,10)
+    #plt.savefig('plots/SoB_vs_time.png')
     
     bounds = [(0.,len(nu))]
     
@@ -150,17 +160,19 @@ def TS(ra, dec, t0, lc, nuData):
     
     x,f,d = scp.optimize.fmin_l_bfgs_b(negTS, 0.1, args=(S,B), bounds=bounds, approx_grad=True, epsilon=1e-8)
 
-    print d
+    #print d
     
-    print d['warnflag'] 
+    #print d['warnflag'] 
     
     nsMax = x #res.x
 
-    print 'nsMax ', nsMax
+    #print 'nsMax ', nsMax
     
     ts = -negTS(nsMax,S,B)
 
-    print 'tsMax ', ts
+    #print 'tsMax ', ts
+
+    #print "N ", len(S)
     
     narray = np.linspace(0,min(300,len(S)-2),100)
     tsArray = []
@@ -174,7 +186,7 @@ def TS(ra, dec, t0, lc, nuData):
     plt.ylabel('TS')
     plt.savefig('plots/ns_vs_TS.png')
     
-    print('TS: {} \n'.format(ts))
+    #print('TS: {} \n'.format(ts))
          
     return ts
 
