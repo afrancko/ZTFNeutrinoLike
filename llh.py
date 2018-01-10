@@ -26,6 +26,8 @@ import scipy as scp
 
 import numpy.lib.recfunctions as rfn
 
+PLOT = True
+
 # ------------------------------- Settings ---------------------------- #
 
 nugen_path = 'data/GFU/SplineMPEmax.MuEx.MC.npy'
@@ -99,6 +101,10 @@ def get_neutrinos(ra, dec, t0, tmax, nuData):
     maskTmax = ((nuDataClose['time']>(tmax-5)) & (nuDataClose['time']<(tmax+30)))
     #mask = abs(nuDataClose['time'] - t0)>5. or ((nuDataClose['time'])>(tmax-5) and (nuDataClose['time'])<(tmax+30))
 
+    #print "nu time min ", min(nuDataClose['time'])
+    #print "nu time max ", max(nuDataClose['time'])
+
+    
     nuDataClose = nuDataClose[maskT0]# | maskTmax]
 
     #print "After time cut ", len(nuDataClose)
@@ -124,9 +130,9 @@ def negTS(ns, S, B):
     return -ts
 
 
-def TS(ra, dec, t0, lc, nuData):
+def TS(ra, dec, t0, lci, nuData, i):
     
-    tmax = lc['time'][np.argmax(lc['flux'])]
+    tmax = lci['time'][np.argmax(lci['flux'])]
     
     nu = get_neutrinos(ra, dec, t0, tmax, nuData)
 
@@ -137,54 +143,34 @@ def TS(ra, dec, t0, lc, nuData):
 
     # devide by 2 because we're only looking at 0.5 years of light curve data? Spline is derived from 1y of data?
     B = (10 ** (coszen_spline(coszen)))  / (2 * np.pi) / 2.
-
-    #print B, np.sum(B)
     
     coszenS = np.cos(utils.dec_to_zen(dec))
     acceptance = 10**coszen_signal_reco_spline(coszenS)
 
     S = 1./(2.*np.pi*nu['sigma']**2)*np.exp(-GreatCircleDistance(ra, dec, nu['ra'], nu['dec'])**2 / (2.*nu['sigma']**2)) * acceptance 
-
-    #plt.figure()
-    #plt.plot(nu['time'],np.log10(S/B),'ob')
-    #plt.ylim(-10,10)
-    #plt.savefig('plots/SoB_vs_time.png')
     
     bounds = [(0.,len(nu))]
     
-    #res = minimize(negLogLike,x0=0,
-    #               args=(S,B),
-    #               method='SLSQP',
-    #               #method='Nelder-Mead',#'SLSQP',
-    #               bounds=bounds, options={'maxiter':100,'disp':False,'ftol':1e-8})
-    
     x,f,d = scp.optimize.fmin_l_bfgs_b(negTS, 0.1, args=(S,B), bounds=bounds, approx_grad=True, epsilon=1e-8)
 
-    #print d
-    
-    #print d['warnflag'] 
     
     nsMax = x #res.x
-
-    #print 'nsMax ', nsMax
     
     ts = -negTS(nsMax,S,B)
 
-    #print 'tsMax ', ts
-
-    #print "N ", len(S)
-    
     narray = np.linspace(0,min(300,len(S)-2),100)
     tsArray = []
     for n in narray:
         tsn = -negTS(n,S,B)
         tsArray.append(tsn)
 
-    plt.figure()
-    plt.plot(narray,tsArray)
-    plt.xlabel('ns')
-    plt.ylabel('TS')
-    plt.savefig('plots/ns_vs_TS.png')
+    if PLOT:
+        fig = plt.figure()
+        plt.plot(narray,tsArray)
+        plt.xlabel('ns')
+        plt.ylabel('TS')
+        plt.savefig('plots/ns_vs_TS_%i.png'%i)
+        plt.close(fig)
     
     #print('TS: {} \n'.format(ts))
          
@@ -192,9 +178,7 @@ def TS(ra, dec, t0, lc, nuData):
 
 
 
-def inject(lc,nuSignal,gamma, Nsim, dtype):
-
-    i = 0
+def inject(lc,i, nuSignal,gamma, Nsim, dtype):
     
     raS = np.deg2rad(lc['meta']['ra'][i])
     decS = np.deg2rad(lc['meta']['dec'][i])
@@ -262,14 +246,15 @@ def inject(lc,nuSignal,gamma, Nsim, dtype):
     return sim
 
         
-def simulate(lc, nuData):
-    i = 0
+def simulate(lc, nuData, Nlc):
 
     ts = []
+
+    print "number of light curve ", Nlc
     
-    for i in range(len(lc['meta']['ra'])):
+    for i in range(Nlc):
         ts.append(TS(np.deg2rad(lc['meta']['ra'][i]), np.deg2rad(lc['meta']['dec'][i]),
-                     lc['meta']['t0'][i],lc['lcs'][i], nuData))
+                     lc['meta']['t0'][i],lc['lcs'][i], nuData, i))
     return ts
     
     
@@ -279,6 +264,14 @@ if __name__ == '__main__':
     nSig = int(sys.argv[2])
     # get Data
     lc = readLCCat()
+
+    # to make things faster, just select a subset here
+    Nlc = len(lc['meta']['ra'])
+
+    if nSig>0:
+        Nlc = 3
+        print "%i events will be injected on %i SNe"%(nSig,Nlc)
+    
     nuData = np.load(GFU_path)
     weight = np.ones_like(nuData['ra'])
     nuData = rec_append_fields(nuData, 'weight',
@@ -302,21 +295,24 @@ if __name__ == '__main__':
     # inject some signal events
     if nSig>0:
         print "inject %i signal events "%nSig
-        simEvents = inject(lc,nuDataSig, settings['gamma'], nSig, nuData.dtype)
-        # merge data (=background) with injected signal events
+        print "len before merging  ", len(nuData)
 
-
-        #data_all = simEvents
+        data_all = nuData
         
-        data_all = nuData.copy()
-        print "data_all ", len(data_all)
-        data_all.resize(len(nuData) + len(simEvents))
-        data_all[len(nuData):] = simEvents
-        print "data_all after merging ", len(data_all)
-
+        # inject the same amount of signal on each SN
+        for i in range(Nlc):
+            simEvents = inject(lc,i,nuDataSig, settings['gamma'], nSig, nuData.dtype)
+            # merge data (=background) with injected signal events
+            #data_all = simEvents
+            data_all = data_all.copy()
+            old_size = len(data_all)
+            data_all.resize(old_size + len(simEvents))
+            data_all[old_size:] = simEvents
+            print "data_all after merging ", len(data_all)        
     else:
         data_all = nuData
 
+    print "data_all after merging ", len(data_all)    
     print 'splinename', spline_name
    
     if 0:#not os.path.exists('coszen_spl%s.npy'%spline_name) or \
@@ -340,8 +336,15 @@ if __name__ == '__main__':
 
     print('##############Create BG TS Distrbution##############')
     if 1:#not os.path.exists(filename):
-        llh_bg_dist= simulate(lc, data_all)#, settings['Nsim'], filename=filename)
+        llh_bg_dist= simulate(lc, data_all, Nlc)#, settings['Nsim'], filename=filename)
         np.save(filename,llh_bg_dist)
+        if PLOT:
+            plt.figure()
+            X2 = np.sort(llh_bg_dist)
+            F2 = np.ones(len(llh_bg_dist)) - np.array(range(len(llh_bg_dist))) / float(len(llh_bg_dist))
+            plt.plot(X2, F2)
+            plt.xlabel('TS')
+            plt.savefig('plots/TSDist_sig%i.png'%nSig)
     else:
         print('Load Trials...')
         llh_bg_dist = np.load(filename)
