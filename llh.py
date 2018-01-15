@@ -184,6 +184,9 @@ def inject(lc,i, nuSignal,gamma, Nsim, dtype):
     decS = np.deg2rad(lc['meta']['dec'][i])
     t0 = lc['meta']['t0'][i]
 
+    SNid = lc['meta']['idx_orig'][i]
+
+    fname = 'SN_signal/neutrinos_%i.npy'%SNid
     
     enSim = []
     sigmaSim = []
@@ -191,11 +194,14 @@ def inject(lc,i, nuSignal,gamma, Nsim, dtype):
     aziSim = []
     raSim = []
     timeSim = []
-    distTrue = []
+    #distTrue = []
     weightSim = []
-    
-    # check if single source or source list
-    if type(raS) is np.float64:
+
+    if os.path.exists(fname):
+        print "load file %s"%fname
+        fSource = np.load(fname)
+    else:
+ 
         zen_mask = np.abs(np.cos(nuSignal['zenith'])-np.cos(utils.dec_to_zen(decS)))<0.01
         fSource = nuSignal[zen_mask]
         
@@ -209,21 +215,24 @@ def inject(lc,i, nuSignal,gamma, Nsim, dtype):
             fSource[i][settings['az_reco']] = rotatedRa
             fSource[i][settings['zen_reco']] = utils.dec_to_zen(rotatedDec)
 
-        weight = fSource['ow']/10**fSource['logE']**gamma
-        draw = np.random.choice(range(len(fSource)),
-                                Nsim,
-                                p=weight / np.sum(weight))
+        np.save(fname,fSource)
+            
+            
+    weight = fSource['ow']/10**fSource['logE']**gamma
+    draw = np.random.choice(range(len(fSource)),
+                            Nsim,
+                            p=weight / np.sum(weight))
 
-        enSim.extend(fSource[draw][settings['E_reco']])
-        sigmaSim.extend(fSource[draw][settings['sigma']])
-        zenSim.extend(fSource[draw][settings['zen_reco']])
-        aziSim.extend(fSource[draw][settings['az_reco']])
-        raSim.extend(fSource[draw][settings['az_reco']])
-        weightSim.extend(weight[draw])
+    enSim.extend(fSource[draw][settings['E_reco']])
+    sigmaSim.extend(fSource[draw][settings['sigma']])
+    zenSim.extend(fSource[draw][settings['zen_reco']])
+    aziSim.extend(fSource[draw][settings['az_reco']])
+    raSim.extend(fSource[draw][settings['az_reco']])
+    weightSim.extend(weight[draw])
 
-        # have all neutrinos arrive at t0
-        timeSim = np.ones_like(np.asarray(enSim))*t0
-        distTrue.append(GreatCircleDistance(rotatedRa, rotatedDec, raS, decS))
+    # have all neutrinos arrive at t0
+    timeSim = np.ones_like(np.asarray(enSim))*t0
+    #distTrue.append(GreatCircleDistance(rotatedRa, rotatedDec, raS, decS))
 
     # produce similar output to data file
     sim = dict()
@@ -269,7 +278,7 @@ if __name__ == '__main__':
     Nlc = len(lc['meta']['ra'])
 
     if nSig>0:
-        Nlc = 3
+        Nlc = 1000
         print "%i events will be injected on %i SNe"%(nSig,Nlc)
     
     nuData = np.load(GFU_path)
@@ -330,7 +339,7 @@ if __name__ == '__main__':
 
     print('Generating PDFs..Finished')
 
-    filename = './output/{}_llh_{}_{:.2f}_{}.npy'.format(addinfo, settings['Nsim'],
+    filename = './output/{}_llh_{}_{:.2f}_{}.npy'.format(addinfo, nSig,
                                               settings['gamma'],
                                               jobN)
 
