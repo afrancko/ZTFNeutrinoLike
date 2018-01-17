@@ -77,6 +77,8 @@ def norm_hist(h):
 
 
 def create_splines(nuData, nuDataSig, zen_reco, az_reco, en_reco, spline_name):
+    import matplotlib.pyplot as plt
+    import matplotlib.cm as cm
 
     Hs = dict()
     
@@ -86,40 +88,373 @@ def create_splines(nuData, nuDataSig, zen_reco, az_reco, en_reco, spline_name):
 
     # energy ratio 2D spline
     print('Create Energy Spline..check yourself whether it is ok')
-    zenith_bins=list(np.linspace(-1.,0.,10, endpoint=False)) + list(np.linspace(0.,1.,8))
+    zenith_bins=list(np.linspace(-1.,0.,20, endpoint=False)) + list(
+        np.linspace(0.,1.,16))
+    e_bins = np.linspace(2.0, 8, 40)
+
+    # zenith_bins=list(np.linspace(-1.,0.,30, endpoint=False)) + list(
+    #     np.linspace(0.,1.,24))
+    # e_bins = np.linspace(2.0, 8, 60)
+
     #tot_weight = np.sum([f[flux][mask & delta_mask] for flux in ftypes], axis=0)
     #tot_weight = np.sum([nuData[flux][mask_data] for flux in ftypes, axis=0)
     tot_weight = np.sum([nuData[flux][mask_data] for flux in ['weight']], axis=0)
-
-    print tot_weight
     
-    x = np.cos(nuData[zen_reco][mask_data]) 
-    y = nuData[en_reco][mask_data]
+    data_x = np.cos(nuData[zen_reco][mask_data])
+    data_y = nuData[en_reco][mask_data]
+    sig_x = np.cos(nuDataSig[zen_reco][mask & delta_mask])
+    sig_y = nuDataSig[en_reco][mask & delta_mask]
 
-    print x, y
-    
-    H_tot, xedges, yedges = np.histogram2d(x, y,
+    plt.figure()
+    plt.hist(data_x)
+    plt.xlabel("cos(recon zenth)")
+    plt.savefig("plots/cos_zen.pdf")
+    plt.close()
+
+    plt.figure()
+    plt.hist(data_y)
+    plt.xlabel("Recon energy")
+    plt.savefig("plots/Energy.pdf")
+    plt.close()
+
+    plt.figure()
+    plt.hist(sig_x)
+    plt.xlabel("Cos(recon zenth)")
+    plt.savefig("plots/sig_cos_zen.pdf")
+    plt.close()
+
+    plt.figure()
+    plt.hist(sig_y)
+    plt.xlabel("Recon energy")
+    plt.savefig("plots/sig_Energy.pdf")
+    plt.close()
+
+    vals = []
+    for ax in [zenith_bins, e_bins]:
+        mids = []
+        for i in range(1, len(ax)):
+            mid = 0.5 * (ax[i] + ax[i-1])
+            mids.append(mid)
+        vals.append(mids)
+
+    H_tot, xedges, yedges = np.histogram2d(data_x, data_y,
                                        #weights=tot_weight,
-                                       bins=(zenith_bins,np.linspace(2.0, 8, 20)),
-                                       normed=True)
+                                       bins=(zenith_bins, e_bins))
 
-    H_tot = np.ma.masked_array(norm_hist(H_tot))
-    H_tot.mask = (H_tot <= 0)
-    print H_tot
-    x = np.cos(nuDataSig[zen_reco][mask & delta_mask])
-    y = nuDataSig[en_reco][mask & delta_mask]
-    H_astro, xedges, yedges = np.histogram2d(x, y,
-                                       weights=nuDataSig['astro'][mask & delta_mask],
-                                       bins=(zenith_bins, np.linspace(2.0, 8, 20)),
-                                       normed=True)
-    H_astro = np.ma.masked_array(norm_hist(H_astro))
-    H_astro.mask = (H_astro <= 0)
+    H_tot_theo = np.ma.masked_array(norm_hist(H_tot))
+    H_tot_theo.mask = (H_tot_theo <= 0)
+
+    H_astro, xedges, yedges = np.histogram2d(sig_x, sig_y,
+                                             weights=nuDataSig['astro'][
+                                                 mask & delta_mask],
+                                           bins=(zenith_bins, e_bins))
+
+    H_astro_theo = np.ma.masked_array(norm_hist(H_astro))
+    H_astro_theo.mask = (H_astro_theo <= 0)
+
+    original_data = H_astro_theo / H_tot_theo
+    original_data = np.ma.array(original_data)
+
+    combine_mask = (H_astro_theo > 0) & (H_tot_theo > 0)
+    combine_mask = np.ma.array(combine_mask)
+    original_data.mask = ~combine_mask
+
+    for i, row in enumerate(H_tot):
+        new = row
+        new[new == 0] = 1
+        norm = np.sum(new)
+        H_tot[i] = new / norm
+
+    for i, row in enumerate(H_astro):
+        new = row
+        new[new == 0] = np.min(new[new > 0])
+        norm = np.sum(new)
+        H_astro[i] = new / norm
+
+    plt.figure()
+    ax = plt.subplot(111)
+    ax.pcolormesh(vals[0], vals[1], H_tot_theo.T)
+    plt.savefig("plots/energy_vs_cos_zen.pdf")
+    plt.close()
+
+    plt.figure()
+    ax = plt.subplot(111)
+    ax.pcolormesh(vals[0], vals[1], H_astro_theo.T)
+    plt.axis([zenith_bins[0], zenith_bins[-1], e_bins[0], e_bins[-1]])
+    plt.savefig("plots/sig_energy_vs_cos_zen.pdf")
+    plt.close()
+
+    plt.figure()
+    ax = plt.subplot(111)
+    data = H_tot.T
+    ax.pcolormesh(vals[0], vals[1], data)
+    plt.axis([zenith_bins[0], zenith_bins[-1], e_bins[0], e_bins[-1]])
+    plt.savefig("plots/corrected_energy_vs_cos_zen.pdf")
+    plt.close()
+
+    plt.figure()
+    ax = plt.subplot(111)
+    ax.pcolormesh(vals[0], vals[1], H_astro.T)
+    plt.axis([zenith_bins[0], zenith_bins[-1], e_bins[0], e_bins[-1]])
+    plt.savefig("plots/corrected_sim_energy_vs_cos_zen.pdf")
+    plt.close()
+
+    plt.figure()
+    ax = plt.subplot(111)
+    ax.pcolormesh(vals[0], vals[1], original_data.T)
+    plt.axis([zenith_bins[0], zenith_bins[-1], e_bins[0], e_bins[-1]])
+    plt.savefig("plots/ratio_energy_vs_cos_zen.pdf")
+    plt.close()
+
+    plt.figure()
+    ax = plt.subplot(111)
+    log_data = np.log(original_data)
+    cbar = ax.pcolormesh(vals[0], vals[1], log_data.T, vmin=-np.max(log_data),
+                         vmax = np.max(log_data),
+                         cmap=cm.get_cmap('seismic'))
+    cbar.set_edgecolor('face')
+    plt.colorbar(cbar)
+    plt.axis([zenith_bins[0], zenith_bins[-1], e_bins[0], e_bins[-1]])
+    plt.savefig("plots/log_ratio_energy_vs_cos_zen.pdf")
+    plt.close()
+
+    plt.figure()
+    ax = plt.subplot(111)
+    ax.pcolormesh(vals[0], vals[1], H_astro.T/H_tot.T)
+    plt.savefig("plots/corrected_ratio_energy_vs_cos_zen.pdf")
+    plt.close()
+
+    plt.figure()
+    ax = plt.subplot(111)
+    data = H_astro/H_tot
+    data = np.ma.array(data)
+    data.mask = data <= 0
+    data = np.log(data)
+    cbar = ax.pcolormesh(vals[0], vals[1], data.T, vmin=-np.max(data),
+                         vmax = np.max(data),
+                         cmap=cm.get_cmap('seismic'))
+    cbar.set_edgecolor('face')
+    plt.colorbar(cbar)
+    plt.axis([zenith_bins[0], zenith_bins[-1], e_bins[0], e_bins[-1]])
+    plt.savefig("plots/corrected_log_ratio_energy_vs_cos_zen.pdf")
+    plt.close()
+
+    alt_linear_spline = RectBivariateSpline(setNewEdges(xedges),
+                                 setNewEdges(yedges),
+                                 original_data,
+                                 kx=1, ky=1, s=0)
+
+    skylab_data = np.ma.array(original_data)
+
+    for i, row in enumerate(original_data):
+        for j, entry in enumerate(row):
+            sig = isinstance(H_astro_theo[i][j], float)
+            bkg = isinstance(H_tot_theo[i][j], float)
+
+            if (sig > 0) & (bkg > 0):
+                pass
+            elif (sig > 0):
+                skylab_data[i][j] = np.max(row)
+            elif (bkg > 0):
+                skylab_data[i][j] = np.min(row)
+            else:
+                skylab_data[i][j] = 1.
+                
+    # Nearest Neighbour Filling
+
+    from scipy.interpolate import griddata
+
+    vertical_fill = np.ones_like(original_data)
+
+    for i, row in enumerate(original_data):
+        row_mask = combine_mask[i]
+        z = row
+        x, y = np.meshgrid(vals[0][i], vals[1])
+
+        points = np.vstack([x.T[0][row_mask], y.T[0][row_mask]]).T
+
+        bins = griddata(points, z[row_mask], (x, y),
+                                    method='nearest')
+
+        for j, val in enumerate(bins):
+            vertical_fill[i][j] = val
+
+    alt_linear = np.ma.array(vertical_fill).T
+
+    z = np.ma.array(original_data.T)
+
+    x, y = np.meshgrid(vals[0], vals[1])
+
+    points = zip(x[~z.mask], y[~z.mask])
+    
+    # Save splines
 
     spline = RectBivariateSpline(setNewEdges(xedges),
                                  setNewEdges(yedges),
                                  H_astro/H_tot,
                                  kx=3, ky=1, s=0)
     np.save('E_spline%s.npy'%spline_name, spline)
+
+    alt_spline = RectBivariateSpline(setNewEdges(xedges),
+                                 setNewEdges(yedges),
+                                 H_astro_theo/H_tot_theo,
+                                 kx=3, ky=1, s=0)
+
+
+
+    linear_spline = RectBivariateSpline(setNewEdges(xedges),
+                                 setNewEdges(yedges),
+                                 H_astro/H_tot,
+                                 kx=1, ky=1, s=0)
+
+    np.save('Filled_E_spline%s.npy' % spline_name, linear_spline)
+
+    nearest_spline = RectBivariateSpline(setNewEdges(xedges),
+                                         setNewEdges(yedges),
+                                         alt_linear.T,
+                                         kx=1, ky=1, s=0)
+
+    np.save('Nearest_Neighbour_E_spline%s.npy' % spline_name, nearest_spline)
+
+    skylab_spline = RectBivariateSpline(setNewEdges(xedges),
+                                 setNewEdges(yedges),
+                                 skylab_data,
+                                 kx=1, ky=1, s=0)
+
+    plt.figure()
+    ax = plt.subplot(111)
+    cbar = ax.pcolormesh(x, y, alt_linear)
+    cbar.set_edgecolor('face')
+    plt.colorbar(cbar)
+    plt.axis([x.min(), x.max(), y.min(), y.max()])
+    plt.savefig("plots/linear_spline_ratio_energy_vs_cos_zen.pdf")
+    plt.close()
+
+    plt.figure()
+    ax = plt.subplot(111)
+    data = np.log(alt_linear)
+    cbar = ax.pcolormesh(x, y, data, vmin=-np.max(data), vmax=np.max(data),
+                         cmap=cm.get_cmap('seismic'))
+    cbar.set_edgecolor('face')
+    plt.colorbar(cbar)
+    plt.axis([x.min(), x.max(), y.min(), y.max()])
+    plt.savefig("plots/linear_spline_log_ratio_energy_vs_cos_zen.pdf")
+    plt.close()
+    
+    #Plot the spline distribution
+
+    labels = ["corrected_", "", "linear_corrected_", "original_linear_",
+              "nearest_", "skylab_"]
+
+    for i, spl in enumerate([spline, alt_spline, linear_spline,
+                             alt_linear_spline, nearest_spline, skylab_spline]):
+
+        n_dots = 100
+        x = np.linspace(zenith_bins[0], zenith_bins[-1], n_dots)
+        y = np.linspace(e_bins[0], e_bins[-1], n_dots)
+
+        plt.figure()
+        ax = plt.subplot(111)
+        data = spl(x, y)
+        data = np.ma.array(data)
+        data.mask = data <= 0
+        cbar = ax.pcolormesh(x, y, data.T)
+        cbar.set_edgecolor('face')
+        plt.colorbar(cbar)
+        plt.axis([x.min(), x.max(), y.min(), y.max()])
+        plt.savefig("plots/" + labels[i] + "spline_ratio_energy_vs_cos_zen.pdf")
+        plt.close()
+
+        plt.figure()
+        ax = plt.subplot(111)
+        data = np.log(data)
+        cbar = ax.pcolormesh(x, y, data.T, vmin=-np.max(data), vmax = np.max(data),
+                             cmap=cm.get_cmap('seismic'))
+        cbar.set_edgecolor('face')
+        plt.colorbar(cbar)
+        plt.axis([x.min(), x.max(), y.min(), y.max()])
+        plt.savefig("plots/" + labels[i] + "spline_log_ratio_energy_vs_cos_zen.pdf")
+        plt.close()
+        
+    # Attempt at KDE
+
+    # from scipy import stats
+    #
+    # zenith_bins = list(np.linspace(-1., 0., 10, endpoint=False)) + list(
+    #     np.linspace(0., 1., 8))
+    #
+    # e_bins = np.linspace(2.0, 8, 20)
+    #
+    # data_x = np.cos(nuData[zen_reco][mask_data])
+    # data_y = nuData[en_reco][mask_data]
+    #
+    # sim_x = np.cos(nuDataSig[zen_reco][mask & delta_mask])
+    # sim_y = nuDataSig[en_reco][mask & delta_mask]
+    #
+    # kde_dump = []
+    #
+    # for i, [x, y] in enumerate([[data_x, data_y], [sim_x, sim_y]]):
+    #     xmin = np.min(x)
+    #     xmax = np.max(x)
+    #     ymin = np.min(y)
+    #     ymax = np.max(y)
+    #
+    #     X, Y = np.mgrid[xmin:xmax:100j, ymin:ymax:100j]
+    #     positions = np.vstack([X.ravel(), Y.ravel()])
+    #     values = np.vstack([x, y])
+    #     kernel = stats.gaussian_kde(values)
+    #     fig, ax = plt.subplots()
+    #
+    #     kde_vals = []
+    #
+    #     for zen in zenith_bins:
+    #         zen_points = np.ones_like(e_bins) * zen
+    #         points = np.vstack([zen_points, e_bins])
+    #         values = kernel(points)
+    #         norm = np.sum(values)
+    #         row = values/norm
+    #
+    #         to_add = 10**-10
+    #         norm2 = 1 + to_add * float(len(e_bins))
+    #         row2 = (row + to_add)/norm2
+    #         kde_vals.append(row2)
+    #         # print row, norm, np.sum(row), row2, norm2, np.sum(row2)
+    #
+    #     kde_vals = np.ma.array(kde_vals)
+    #     kde_dump.append(kde_vals)
+    #
+    #     del kernel
+    #
+    #     cbar = ax.pcolormesh(zenith_bins, e_bins, kde_vals.T)
+    #     cbar.set_edgecolor('face')
+    #     plt.colorbar(cbar)
+    #     plt.savefig("plots/kde_" + ["", "sim_"][i] + "energy_vs_cos_zen.pdf")
+    #     plt.close()
+    #
+    # plt.figure()
+    # ax = plt.subplot(111)
+    # data = kde_dump[1]/kde_dump[0]
+    # data = np.ma.array(data)
+    # data.mask = data <= 0
+    # cbar = ax.pcolormesh(zenith_bins, e_bins, data.T, vmin = 0, vmax = 1000)
+    # cbar.set_edgecolor('face')
+    # plt.colorbar(cbar)
+    # plt.axis([x.min(), x.max(), y.min(), y.max()])
+    # plt.savefig("plots/kde_ratio_energy_vs_cos_zen.pdf")
+    # plt.close()
+    #
+    # plt.figure()
+    # ax = plt.subplot(111)
+    # data = np.log(data)
+    # cbar = ax.pcolormesh(zenith_bins, e_bins,  data.T, vmin=-5, vmax=5,
+    #                      cmap=cm.get_cmap('seismic'))
+    # cbar.set_edgecolor('face')
+    # plt.colorbar(cbar)
+    # plt.axis([x.min(), x.max(), y.min(), y.max()])
+    # plt.savefig("plots/kde_log_ratio_energy_vs_cos_zen.pdf")
+    # plt.close()
+    #
+    # raw_input("prompt")
 
     # zenith dist 1D spline
     print('Create Zenith Spline...Check if ok..')
