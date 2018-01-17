@@ -26,7 +26,7 @@ import scipy as scp
 
 import numpy.lib.recfunctions as rfn
 
-PLOT = True
+PLOT = False
 
 # ------------------------------- Settings ---------------------------- #
 
@@ -53,7 +53,7 @@ settings = {'E_reco': 'logE',#'muex',
             'maxDist':np.deg2rad(1800),
             'E_weights': True} 
 
-addinfo = 'test'
+addinfo = 'test_energy_filled'
 
 spline_name = 'spline'
 
@@ -135,7 +135,7 @@ def TS(ra, dec, t0, lci, nuData, i):
     tmax = lci['time'][np.argmax(lci['flux'])]
     
     nu = get_neutrinos(ra, dec, t0, tmax, nuData)
-
+    
     if len(nu)==0:
         print "no neutrinos found."
     
@@ -147,7 +147,12 @@ def TS(ra, dec, t0, lci, nuData, i):
     coszenS = np.cos(utils.dec_to_zen(dec))
     acceptance = 10**coszen_signal_reco_spline(coszenS)
 
-    S = 1./(2.*np.pi*nu['sigma']**2)*np.exp(-GreatCircleDistance(ra, dec, nu['ra'], nu['dec'])**2 / (2.*nu['sigma']**2)) * acceptance 
+    E_ratio = E_spline(coszen, nu['logE'],grid=False)
+    #E_ratio = np.random.uniform(0,5,size=len(coszen))
+
+    print "eratio ", E_ratio
+        
+    S = 1./(2.*np.pi*nu['sigma']**2)*np.exp(-GreatCircleDistance(ra, dec, nu['ra'], nu['dec'])**2 / (2.*nu['sigma']**2)) * acceptance * E_ratio
     
     bounds = [(0.,len(nu))]
     
@@ -201,7 +206,6 @@ def inject(lc,i, nuSignal,gamma, Nsim, dtype):
         print "load file %s"%fname
         fSource = np.load(fname)
     else:
- 
         zen_mask = np.abs(np.cos(nuSignal['zenith'])-np.cos(utils.dec_to_zen(decS)))<0.01
         fSource = nuSignal[zen_mask]
         
@@ -278,7 +282,7 @@ if __name__ == '__main__':
     Nlc = len(lc['meta']['ra'])
 
     if nSig>0:
-        Nlc = 1000
+        Nlc = 100
         print "%i events will be injected on %i SNe"%(nSig,Nlc)
     
     nuData = np.load(GFU_path)
@@ -322,17 +326,10 @@ if __name__ == '__main__':
         data_all = nuData
 
     print "data_all after merging ", len(data_all)    
-    print 'splinename', spline_name
-   
-    if 0:#not os.path.exists('coszen_spl%s.npy'%spline_name) or \
-        #not os.path.exists('E_spline.npy%s'%spline_name) or \
-        #not os.path.exists('coszen_signal_spl%s.npy'%spline_name):
-            print('Create New Splines..')
-            utils.create_splines(nuData,nuDataSig,
-                                 settings['zen_reco'],
-                                 settings['az_reco'], 
-                                 settings['E_reco'], spline_name)
-    E_spline = np.load('E_spline%s.npy'%spline_name)[()]
+ 
+    #E_spline = np.load('E_spline%s.npy'%spline_name)[()]
+    E_spline = np.load('Filled_E_spline%s.npy'%spline_name)[()]
+
     coszen_spline = np.load('coszen_spl%s.npy'%spline_name)[()]
     coszen_signal_spline = np.load('coszen_signal_spl%s.npy'%spline_name)[()]
     coszen_signal_reco_spline = np.load('coszen_signal_reco_spl%s.npy'%spline_name)[()]
