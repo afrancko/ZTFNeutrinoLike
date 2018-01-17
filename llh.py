@@ -1,37 +1,43 @@
 #! /usr/bin/env python
 # coding: utf-8
 
+import matplotlib
 
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
 # from astropy.coordinates import SkyCoord
 # from astropy import units as u
 # from plot_conf import *
 
-from fancy_plot import *
+# from fancy_plot import *
 import numpy as np
-import matplotlib.pyplot as plt
-from scipy.interpolate import interp1d
-import pyfits as fits
+
+# from scipy.interpolate import interp1d
+# import pyfits as fits
 #from astropy.table import Column
 import sys
 from numpy.lib.recfunctions import rec_append_fields
-from scipy.interpolate import interp2d, InterpolatedUnivariateSpline, RectBivariateSpline
+# from scipy.interpolate import interp2d, InterpolatedUnivariateSpline, RectBivariateSpline
 import os
 import utils
 import pickle
 
-from scipy.optimize import minimize
-
-import scipy.optimize
+# from scipy.optimize import minimize
+#
+# import scipy.optimize
 import scipy as scp
 
-import numpy.lib.recfunctions as rfn
+# import numpy.lib.recfunctions as rfn
 
 # ------------------------------- Settings ---------------------------- #
 
-nugen_path = 'data/GFU/SplineMPEmax.MuEx.MC.npy'
-GFU_path = 'data/GFU/SplineMPEmax.MuEx.IC86-2016.npy'
+source = "/afs/ifh.de/user/s/steinrob/scratch/ZTF_neutrino/"
+
+nugen_path = source + 'data/GFU/SplineMPEmax.MuEx.MC.npy'
+GFU_path = source + 'data/GFU/SplineMPEmax.MuEx.IC86-2016.npy'
 # use only Ibc for now (later use all!)
-LCC_path = "data/lcs_strawman_msip6m_Ibc_nugent_detected_real_y2016.pkl"
+LCC_path = source + "data/lcs_strawman_msip6m_Ibc_nugent_detected_real_y2016" \
+                    ".pkl"
 
 settings = {'E_reco': 'logE',#'muex',
             'zen_reco': 'zenith',
@@ -180,11 +186,12 @@ def TS(ra, dec, t0, lc, nuData):
         tsn = -negTS(n,S,B)
         tsArray.append(tsn)
 
-    plt.figure()
-    plt.plot(narray,tsArray)
-    plt.xlabel('ns')
-    plt.ylabel('TS')
-    plt.savefig('plots/ns_vs_TS.png')
+    # plt.figure()
+    # plt.plot(narray,tsArray)
+    # plt.xlabel('ns')
+    # plt.ylabel('TS')
+    # plt.savefig('plots/ns_vs_TS.png')
+    # plt.close()
     
     #print('TS: {} \n'.format(ts))
          
@@ -319,9 +326,9 @@ if __name__ == '__main__':
 
     print 'splinename', spline_name
    
-    if 0:#not os.path.exists('coszen_spl%s.npy'%spline_name) or \
-        #not os.path.exists('E_spline.npy%s'%spline_name) or \
-        #not os.path.exists('coszen_signal_spl%s.npy'%spline_name):
+    if not (os.path.exists('coszen_spl%s.npy'%spline_name) and
+         os.path.exists('E_spline.npy%s'%spline_name) and
+         os.path.exists('coszen_signal_spl%s.npy'%spline_name)):
             print('Create New Splines..')
             utils.create_splines(nuData,nuDataSig,
                                  settings['zen_reco'],
