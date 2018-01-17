@@ -26,6 +26,8 @@ import scipy as scp
 
 import numpy.lib.recfunctions as rfn
 
+PLOT = False
+
 # ------------------------------- Settings ---------------------------- #
 
 nugen_path = 'data/GFU/SplineMPEmax.MuEx.MC.npy'
@@ -51,7 +53,7 @@ settings = {'E_reco': 'logE',#'muex',
             'maxDist':np.deg2rad(1800),
             'E_weights': True} 
 
-addinfo = 'test'
+addinfo = 'test_energy_filled'
 
 spline_name = 'spline'
 
@@ -99,6 +101,10 @@ def get_neutrinos(ra, dec, t0, tmax, nuData):
     maskTmax = ((nuDataClose['time']>(tmax-5)) & (nuDataClose['time']<(tmax+30)))
     #mask = abs(nuDataClose['time'] - t0)>5. or ((nuDataClose['time'])>(tmax-5) and (nuDataClose['time'])<(tmax+30))
 
+    #print "nu time min ", min(nuDataClose['time'])
+    #print "nu time max ", max(nuDataClose['time'])
+
+    
     nuDataClose = nuDataClose[maskT0]# | maskTmax]
 
     #print "After time cut ", len(nuDataClose)
@@ -124,12 +130,12 @@ def negTS(ns, S, B):
     return -ts
 
 
-def TS(ra, dec, t0, lc, nuData):
+def TS(ra, dec, t0, lci, nuData, i):
     
-    tmax = lc['time'][np.argmax(lc['flux'])]
+    tmax = lci['time'][np.argmax(lci['flux'])]
     
     nu = get_neutrinos(ra, dec, t0, tmax, nuData)
-
+    
     if len(nu)==0:
         print "no neutrinos found."
     
@@ -137,54 +143,39 @@ def TS(ra, dec, t0, lc, nuData):
 
     # devide by 2 because we're only looking at 0.5 years of light curve data? Spline is derived from 1y of data?
     B = (10 ** (coszen_spline(coszen)))  / (2 * np.pi) / 2.
-
-    #print B, np.sum(B)
     
     coszenS = np.cos(utils.dec_to_zen(dec))
     acceptance = 10**coszen_signal_reco_spline(coszenS)
 
-    S = 1./(2.*np.pi*nu['sigma']**2)*np.exp(-GreatCircleDistance(ra, dec, nu['ra'], nu['dec'])**2 / (2.*nu['sigma']**2)) * acceptance 
+    E_ratio = E_spline(coszen, nu['logE'],grid=False)
+    #E_ratio = np.random.uniform(0,5,size=len(coszen))
 
-    #plt.figure()
-    #plt.plot(nu['time'],np.log10(S/B),'ob')
-    #plt.ylim(-10,10)
-    #plt.savefig('plots/SoB_vs_time.png')
+    print "eratio ", E_ratio
+        
+    S = 1./(2.*np.pi*nu['sigma']**2)*np.exp(-GreatCircleDistance(ra, dec, nu['ra'], nu['dec'])**2 / (2.*nu['sigma']**2)) * acceptance * E_ratio
     
     bounds = [(0.,len(nu))]
     
-    #res = minimize(negLogLike,x0=0,
-    #               args=(S,B),
-    #               method='SLSQP',
-    #               #method='Nelder-Mead',#'SLSQP',
-    #               bounds=bounds, options={'maxiter':100,'disp':False,'ftol':1e-8})
-    
     x,f,d = scp.optimize.fmin_l_bfgs_b(negTS, 0.1, args=(S,B), bounds=bounds, approx_grad=True, epsilon=1e-8)
 
-    #print d
-    
-    #print d['warnflag'] 
     
     nsMax = x #res.x
-
-    #print 'nsMax ', nsMax
     
     ts = -negTS(nsMax,S,B)
 
-    #print 'tsMax ', ts
-
-    #print "N ", len(S)
-    
     narray = np.linspace(0,min(300,len(S)-2),100)
     tsArray = []
     for n in narray:
         tsn = -negTS(n,S,B)
         tsArray.append(tsn)
 
-    plt.figure()
-    plt.plot(narray,tsArray)
-    plt.xlabel('ns')
-    plt.ylabel('TS')
-    plt.savefig('plots/ns_vs_TS.png')
+    if PLOT:
+        fig = plt.figure()
+        plt.plot(narray,tsArray)
+        plt.xlabel('ns')
+        plt.ylabel('TS')
+        plt.savefig('plots/ns_vs_TS_%i.png'%i)
+        plt.close(fig)
     
     #print('TS: {} \n'.format(ts))
          
@@ -192,14 +183,15 @@ def TS(ra, dec, t0, lc, nuData):
 
 
 
-def inject(lc,nuSignal,gamma, Nsim, dtype):
-
-    i = 0
+def inject(lc,i, nuSignal,gamma, Nsim, dtype):
     
     raS = np.deg2rad(lc['meta']['ra'][i])
     decS = np.deg2rad(lc['meta']['dec'][i])
     t0 = lc['meta']['t0'][i]
 
+    SNid = lc['meta']['idx_orig'][i]
+
+    fname = 'SN_signal/neutrinos_%i.npy'%SNid
     
     enSim = []
     sigmaSim = []
@@ -207,11 +199,13 @@ def inject(lc,nuSignal,gamma, Nsim, dtype):
     aziSim = []
     raSim = []
     timeSim = []
-    distTrue = []
+    #distTrue = []
     weightSim = []
-    
-    # check if single source or source list
-    if type(raS) is np.float64:
+
+    if os.path.exists(fname):
+        print "load file %s"%fname
+        fSource = np.load(fname)
+    else:
         zen_mask = np.abs(np.cos(nuSignal['zenith'])-np.cos(utils.dec_to_zen(decS)))<0.01
         fSource = nuSignal[zen_mask]
         
@@ -225,21 +219,24 @@ def inject(lc,nuSignal,gamma, Nsim, dtype):
             fSource[i][settings['az_reco']] = rotatedRa
             fSource[i][settings['zen_reco']] = utils.dec_to_zen(rotatedDec)
 
-        weight = fSource['ow']/10**fSource['logE']**gamma
-        draw = np.random.choice(range(len(fSource)),
-                                Nsim,
-                                p=weight / np.sum(weight))
+        np.save(fname,fSource)
+            
+            
+    weight = fSource['ow']/10**fSource['logE']**gamma
+    draw = np.random.choice(range(len(fSource)),
+                            Nsim,
+                            p=weight / np.sum(weight))
 
-        enSim.extend(fSource[draw][settings['E_reco']])
-        sigmaSim.extend(fSource[draw][settings['sigma']])
-        zenSim.extend(fSource[draw][settings['zen_reco']])
-        aziSim.extend(fSource[draw][settings['az_reco']])
-        raSim.extend(fSource[draw][settings['az_reco']])
-        weightSim.extend(weight[draw])
+    enSim.extend(fSource[draw][settings['E_reco']])
+    sigmaSim.extend(fSource[draw][settings['sigma']])
+    zenSim.extend(fSource[draw][settings['zen_reco']])
+    aziSim.extend(fSource[draw][settings['az_reco']])
+    raSim.extend(fSource[draw][settings['az_reco']])
+    weightSim.extend(weight[draw])
 
-        # have all neutrinos arrive at t0
-        timeSim = np.ones_like(np.asarray(enSim))*t0
-        distTrue.append(GreatCircleDistance(rotatedRa, rotatedDec, raS, decS))
+    # have all neutrinos arrive at t0
+    timeSim = np.ones_like(np.asarray(enSim))*t0
+    #distTrue.append(GreatCircleDistance(rotatedRa, rotatedDec, raS, decS))
 
     # produce similar output to data file
     sim = dict()
@@ -262,14 +259,15 @@ def inject(lc,nuSignal,gamma, Nsim, dtype):
     return sim
 
         
-def simulate(lc, nuData):
-    i = 0
+def simulate(lc, nuData, Nlc):
 
     ts = []
+
+    print "number of light curve ", Nlc
     
-    for i in range(len(lc['meta']['ra'])):
+    for i in range(Nlc):
         ts.append(TS(np.deg2rad(lc['meta']['ra'][i]), np.deg2rad(lc['meta']['dec'][i]),
-                     lc['meta']['t0'][i],lc['lcs'][i], nuData))
+                     lc['meta']['t0'][i],lc['lcs'][i], nuData, i))
     return ts
     
     
@@ -279,6 +277,14 @@ if __name__ == '__main__':
     nSig = int(sys.argv[2])
     # get Data
     lc = readLCCat()
+
+    # to make things faster, just select a subset here
+    Nlc = len(lc['meta']['ra'])
+
+    if nSig>0:
+        Nlc = 100
+        print "%i events will be injected on %i SNe"%(nSig,Nlc)
+    
     nuData = np.load(GFU_path)
     weight = np.ones_like(nuData['ra'])
     nuData = rec_append_fields(nuData, 'weight',
@@ -302,46 +308,49 @@ if __name__ == '__main__':
     # inject some signal events
     if nSig>0:
         print "inject %i signal events "%nSig
-        simEvents = inject(lc,nuDataSig, settings['gamma'], nSig, nuData.dtype)
-        # merge data (=background) with injected signal events
+        print "len before merging  ", len(nuData)
 
-
-        #data_all = simEvents
+        data_all = nuData
         
-        data_all = nuData.copy()
-        print "data_all ", len(data_all)
-        data_all.resize(len(nuData) + len(simEvents))
-        data_all[len(nuData):] = simEvents
-        print "data_all after merging ", len(data_all)
-
+        # inject the same amount of signal on each SN
+        for i in range(Nlc):
+            simEvents = inject(lc,i,nuDataSig, settings['gamma'], nSig, nuData.dtype)
+            # merge data (=background) with injected signal events
+            #data_all = simEvents
+            data_all = data_all.copy()
+            old_size = len(data_all)
+            data_all.resize(old_size + len(simEvents))
+            data_all[old_size:] = simEvents
+            print "data_all after merging ", len(data_all)        
     else:
         data_all = nuData
 
-    print 'splinename', spline_name
-   
-    if 0:#not os.path.exists('coszen_spl%s.npy'%spline_name) or \
-        #not os.path.exists('E_spline.npy%s'%spline_name) or \
-        #not os.path.exists('coszen_signal_spl%s.npy'%spline_name):
-            print('Create New Splines..')
-            utils.create_splines(nuData,nuDataSig,
-                                 settings['zen_reco'],
-                                 settings['az_reco'], 
-                                 settings['E_reco'], spline_name)
-    E_spline = np.load('E_spline%s.npy'%spline_name)[()]
+    print "data_all after merging ", len(data_all)    
+ 
+    #E_spline = np.load('E_spline%s.npy'%spline_name)[()]
+    E_spline = np.load('Filled_E_spline%s.npy'%spline_name)[()]
+
     coszen_spline = np.load('coszen_spl%s.npy'%spline_name)[()]
     coszen_signal_spline = np.load('coszen_signal_spl%s.npy'%spline_name)[()]
     coszen_signal_reco_spline = np.load('coszen_signal_reco_spl%s.npy'%spline_name)[()]
 
     print('Generating PDFs..Finished')
 
-    filename = './output/{}_llh_{}_{:.2f}_{}.npy'.format(addinfo, settings['Nsim'],
+    filename = './output/{}_llh_{}_{:.2f}_{}.npy'.format(addinfo, nSig,
                                               settings['gamma'],
                                               jobN)
 
     print('##############Create BG TS Distrbution##############')
     if 1:#not os.path.exists(filename):
-        llh_bg_dist= simulate(lc, data_all)#, settings['Nsim'], filename=filename)
+        llh_bg_dist= simulate(lc, data_all, Nlc)#, settings['Nsim'], filename=filename)
         np.save(filename,llh_bg_dist)
+        if PLOT:
+            plt.figure()
+            X2 = np.sort(llh_bg_dist)
+            F2 = np.ones(len(llh_bg_dist)) - np.array(range(len(llh_bg_dist))) / float(len(llh_bg_dist))
+            plt.plot(X2, F2)
+            plt.xlabel('TS')
+            plt.savefig('plots/TSDist_sig%i.png'%nSig)
     else:
         print('Load Trials...')
         llh_bg_dist = np.load(filename)
