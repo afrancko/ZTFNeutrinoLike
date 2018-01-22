@@ -18,7 +18,7 @@ from scipy.interpolate import interp2d, InterpolatedUnivariateSpline, RectBivari
 import os
 import utils
 import pickle
-
+from scipy.stats import norm
 from scipy.optimize import minimize
 
 import scipy.optimize
@@ -26,14 +26,14 @@ import scipy as scp
 
 import numpy.lib.recfunctions as rfn
 
-PLOT = False
+PLOT = True
 
 # ------------------------------- Settings ---------------------------- #
 
 nugen_path = 'data/GFU/SplineMPEmax.MuEx.MC.npy'
 GFU_path = 'data/GFU/SplineMPEmax.MuEx.IC86-2016.npy'
 # use only Ibc for now (later use all!)
-LCC_path = "data/lcs_strawman_msip6m_Ibc_nugent_detected_real_y2016.pkl"
+LCC_path = "data/lcs_strawman_msip6m_all_real_y2016_vs02.pkl"
 
 settings = {'E_reco': 'logE',#'muex',
             'zen_reco': 'zenith',
@@ -53,7 +53,7 @@ settings = {'E_reco': 'logE',#'muex',
             'maxDist':np.deg2rad(1800),
             'E_weights': True} 
 
-addinfo = 'test_energy_filled'
+addinfo = 'test_energy_z'
 
 spline_name = 'spline'
 
@@ -86,12 +86,9 @@ def get_neutrinos(ra, dec, t0, tmax, nuData):
                                nuData['dec'],
                                ra, dec)
     mask = dist < settings['maxDist']
-
-    #print "N events ", len(nuData)
     
     nuDataClose = nuData[mask]
 
-    #print "After space cut ", len(nuDataClose)
     
     if len(nuDataClose) == 0:
         print "no neutrino found within %.1f degrees"%(np.rad2deg(settings['maxDist']))
@@ -100,14 +97,8 @@ def get_neutrinos(ra, dec, t0, tmax, nuData):
     maskT0 =  abs(nuDataClose['time'] - t0)<5.
     maskTmax = ((nuDataClose['time']>(tmax-5)) & (nuDataClose['time']<(tmax+30)))
     #mask = abs(nuDataClose['time'] - t0)>5. or ((nuDataClose['time'])>(tmax-5) and (nuDataClose['time'])<(tmax+30))
-
-    #print "nu time min ", min(nuDataClose['time'])
-    #print "nu time max ", max(nuDataClose['time'])
-
-    
+   
     nuDataClose = nuDataClose[maskT0]# | maskTmax]
-
-    #print "After time cut ", len(nuDataClose)
     
     if len(nuDataClose) == 0:
         print "no neutrino found within 100 days from t0=%f"%t0
@@ -116,21 +107,23 @@ def get_neutrinos(ra, dec, t0, tmax, nuData):
    
 
 
-def negTS(ns, S, B):
+def negTS(ns, X, S):
  
-    N = float(len(S))
+    #N = float(len(S))
     
     #if ns>=N:
     #    return 1e6
     
-    llh = np.sum(np.log(ns/N*S + (1.-(ns/N))*B))
-    llh0 = np.sum(np.log(B))
-    ts = 2*(llh-llh0)
+    #llh = np.sum(np.log(ns/N*S + (1.-(ns/N))*B))
+    #llh0 = np.sum(np.log(B))
+    #ts = 2*(llh-llh0)
 
+    ts = 2*np.sum(np.log(ns*X+1))
+    
     return -ts
 
 
-def TS(ra, dec, t0, lci, nuData, i):
+def TS(ra, dec, t0, z, lci, nuData, i):
     
     tmax = lci['time'][np.argmax(lci['flux'])]
     
@@ -148,25 +141,44 @@ def TS(ra, dec, t0, lci, nuData, i):
     acceptance = 10**coszen_signal_reco_spline(coszenS)
 
     E_ratio = E_spline(coszen, nu['logE'],grid=False)
-    #E_ratio = np.random.uniform(0,5,size=len(coszen))
+    #E_ratio = np.random.uniform(0.5,1.5,size=len(coszen))
 
-    print "eratio ", E_ratio
-        
-    S = 1./(2.*np.pi*nu['sigma']**2)*np.exp(-GreatCircleDistance(ra, dec, nu['ra'], nu['dec'])**2 / (2.*nu['sigma']**2)) * acceptance * E_ratio
+    #print "eratio ", E_ratio
+    #print "z ", z, " z_spline ", z_spline(z)
+
+    if i%500 == 0:
+        print "i ", i
+    
+    S = 1./(2.*np.pi*nu['sigma']**2)*np.exp(-GreatCircleDistance(ra, dec, nu['ra'], nu['dec'])**2 / (2.*nu['sigma']**2)) #* acceptance #* z_spline(z) # * E_ratio
+
+    
+    SoB = S/B * z_spline(z) *E_ratio
+    
+    X = 1./float(len(S)) * (SoB - 1)
     
     bounds = [(0.,len(nu))]
     
-    x,f,d = scp.optimize.fmin_l_bfgs_b(negTS, 0.1, args=(S,B), bounds=bounds, approx_grad=True, epsilon=1e-8)
+    x,f,d = scp.optimize.fmin_l_bfgs_b(negTS, 0.1, args=(X,S), bounds=bounds, approx_grad=True, epsilon=1e-8)
 
-    
+    #print "warnflags ", d['warnflag'], d['task'] 
+
+    if d['warnflag']>0:
+        print "repeat fitting"
+        x,f,d = scp.optimize.fmin_l_bfgs_b(negTS, 3, args=(X,S), bounds=bounds, approx_grad=True, epsilon=1e-8)
+        print "warnflags ", d['warnflag'], d['task'] 
+        if d['warnflag']>0:
+            print "repeat fitting again"
+            x,f,d = scp.optimize.fmin_l_bfgs_b(negTS, 3, args=(X,S), bounds=bounds, approx_grad=True, epsilon=1e-9)
+            print "warnflags ", d['warnflag'], d['task'] 
+
     nsMax = x #res.x
     
-    ts = -negTS(nsMax,S,B)
+    ts = -negTS(nsMax,X,S)
 
-    narray = np.linspace(0,min(300,len(S)-2),100)
+    narray = np.linspace(0,min(20,len(S)-2),100)
     tsArray = []
     for n in narray:
-        tsn = -negTS(n,S,B)
+        tsn = -negTS(n,X,S)
         tsArray.append(tsn)
 
     if PLOT:
@@ -179,20 +191,24 @@ def TS(ra, dec, t0, lci, nuData, i):
     
     #print('TS: {} \n'.format(ts))
          
-    return ts
+    return ts, nsMax
 
 
 
 def inject(lc,i, nuSignal,gamma, Nsim, dtype):
-    
-    raS = np.deg2rad(lc['meta']['ra'][i])
-    decS = np.deg2rad(lc['meta']['dec'][i])
-    t0 = lc['meta']['t0'][i]
 
-    SNid = lc['meta']['idx_orig'][i]
+    SNType = lc['type'][i]
 
-    fname = 'SN_signal/neutrinos_%i.npy'%SNid
     
+    raS = np.deg2rad(lc['ra'][i])
+    decS = np.deg2rad(lc['dec'][i])
+    t0 = lc['t0'][i]
+
+    SNid = lc['ID'][i]
+    
+    fname = 'SN_signal/neutrinos_%s_%i.npy'%(SNType,SNid)
+    #fname = 'SN_signal/neutrinos_%i.npy'%(SNid)
+
     enSim = []
     sigmaSim = []
     zenSim = []
@@ -206,7 +222,8 @@ def inject(lc,i, nuSignal,gamma, Nsim, dtype):
         print "load file %s"%fname
         fSource = np.load(fname)
     else:
-        zen_mask = np.abs(np.cos(nuSignal['zenith'])-np.cos(utils.dec_to_zen(decS)))<0.01
+        print "create file %s"%fname
+        zen_mask = np.abs(np.cos(nuSignal['zenith'])-np.cos(utils.dec_to_zen(decS)))<0.005
         fSource = nuSignal[zen_mask]
         
         print "selected %i events in given zenith range"%len(fSource)
@@ -222,7 +239,7 @@ def inject(lc,i, nuSignal,gamma, Nsim, dtype):
         np.save(fname,fSource)
             
             
-    weight = fSource['ow']/10**fSource['logE']**gamma
+    weight = fSource['ow']/fSource['trueE']**gamma
     draw = np.random.choice(range(len(fSource)),
                             Nsim,
                             p=weight / np.sum(weight))
@@ -262,13 +279,16 @@ def inject(lc,i, nuSignal,gamma, Nsim, dtype):
 def simulate(lc, nuData, Nlc):
 
     ts = []
-
+    nmax = []
+    
     print "number of light curve ", Nlc
     
     for i in range(Nlc):
-        ts.append(TS(np.deg2rad(lc['meta']['ra'][i]), np.deg2rad(lc['meta']['dec'][i]),
-                     lc['meta']['t0'][i],lc['lcs'][i], nuData, i))
-    return ts
+        tsi = TS(np.deg2rad(lc['ra'][i]), np.deg2rad(lc['dec'][i]), 
+                 lc['t0'][i], lc['z'][i], lc['lcs'][i], nuData, i)
+        ts.append(tsi[0])
+        nmax.append(tsi[1])
+    return ts, nmax
     
     
 if __name__ == '__main__':
@@ -277,12 +297,20 @@ if __name__ == '__main__':
     nSig = int(sys.argv[2])
     # get Data
     lc = readLCCat()
+    
+    np.random.shuffle(lc['z'])
+
+    z_hist_BG = np.load('z_hist_BG.npy')
+    lc['z'] = np.random.choice(z_hist_BG, size=len(lc['z']))
 
     # to make things faster, just select a subset here
-    Nlc = len(lc['meta']['ra'])
-
+    Nlc = 100 #len(lc['ra'])
+    
     if nSig>0:
-        Nlc = 100
+        Nlc = 500
+        z_hist_sig = np.load('z_hist_signal.npy')
+        lc['z'] = np.random.choice(z_hist_sig, size=len(lc['z']))
+
         print "%i events will be injected on %i SNe"%(nSig,Nlc)
     
     nuData = np.load(GFU_path)
@@ -311,10 +339,12 @@ if __name__ == '__main__':
         print "len before merging  ", len(nuData)
 
         data_all = nuData
+
+        lc_Ibc = utils.selectSNType(lc,"Ibc")
         
         # inject the same amount of signal on each SN
-        for i in range(Nlc):
-            simEvents = inject(lc,i,nuDataSig, settings['gamma'], nSig, nuData.dtype)
+        for i in range(min(Nlc,len(lc_Ibc['ra']))):
+            simEvents = inject(lc_Ibc,i,nuDataSig, settings['gamma'], nSig, nuData.dtype)
             # merge data (=background) with injected signal events
             #data_all = simEvents
             data_all = data_all.copy()
@@ -328,12 +358,16 @@ if __name__ == '__main__':
     print "data_all after merging ", len(data_all)    
  
     #E_spline = np.load('E_spline%s.npy'%spline_name)[()]
-    E_spline = np.load('Filled_E_spline%s.npy'%spline_name)[()]
+    #E_spline = np.load('Filled_E_spline%s.npy'%spline_name)[()]
+    E_spline = np.load('Nearest_Neighbour_E_spline%s.npy'%spline_name)[()]
 
+    
     coszen_spline = np.load('coszen_spl%s.npy'%spline_name)[()]
     coszen_signal_spline = np.load('coszen_signal_spl%s.npy'%spline_name)[()]
     coszen_signal_reco_spline = np.load('coszen_signal_reco_spl%s.npy'%spline_name)[()]
 
+    z_spline = np.load('z_spl_20.0.npy')[()]
+    
     print('Generating PDFs..Finished')
 
     filename = './output/{}_llh_{}_{:.2f}_{}.npy'.format(addinfo, nSig,
@@ -342,8 +376,10 @@ if __name__ == '__main__':
 
     print('##############Create BG TS Distrbution##############')
     if 1:#not os.path.exists(filename):
-        llh_bg_dist= simulate(lc, data_all, Nlc)#, settings['Nsim'], filename=filename)
+        llh_bg_dist, nmax_dist = simulate(lc, data_all, Nlc)#, settings['Nsim'], filename=filename)
         np.save(filename,llh_bg_dist)
+        np.save(filename.replace('llh','ns'),nmax_dist)
+
         if PLOT:
             plt.figure()
             X2 = np.sort(llh_bg_dist)

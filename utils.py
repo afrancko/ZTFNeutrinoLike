@@ -4,6 +4,19 @@ import os
 
 
 
+def selectSNType(lcFile,maskType):
+
+    lcPickle = lcFile.copy()
+    
+    mask = [lcPickle['type'][i] == maskType for i in range(len(lcPickle['type']))]
+    mask = np.asarray(mask)
+
+    for k in lcFile.keys():
+        newArray = np.asarray(lcPickle[k])
+        lcPickle[k] = newArray[mask]
+
+    return lcPickle
+
 def delta_psi(theta1,phi1, theta2, phi2):
     sp = np.sin(theta1)*np.cos(phi1)*np.sin(theta2)*np.cos(phi2) \
          + np.sin(theta1)*np.sin(phi1)*np.sin(theta2)*np.sin(phi2) \
