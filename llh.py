@@ -26,7 +26,7 @@ import scipy as scp
 
 import numpy.lib.recfunctions as rfn
 
-PLOT = True
+PLOT = False
 
 # ------------------------------- Settings ---------------------------- #
 
@@ -53,7 +53,7 @@ settings = {'E_reco': 'logE',#'muex',
             'maxDist':np.deg2rad(1800),
             'E_weights': True} 
 
-addinfo = 'test_energy_z'
+addinfo = 'test'
 
 spline_name = 'spline'
 
@@ -109,15 +109,6 @@ def get_neutrinos(ra, dec, t0, tmax, nuData):
 
 def negTS(ns, X, S):
  
-    #N = float(len(S))
-    
-    #if ns>=N:
-    #    return 1e6
-    
-    #llh = np.sum(np.log(ns/N*S + (1.-(ns/N))*B))
-    #llh0 = np.sum(np.log(B))
-    #ts = 2*(llh-llh0)
-
     ts = 2*np.sum(np.log(ns*X+1))
     
     return -ts
@@ -134,25 +125,19 @@ def TS(ra, dec, t0, z, lci, nuData, i):
     
     coszen = np.cos(utils.dec_to_zen(nu['dec']))
 
-    # devide by 2 because we're only looking at 0.5 years of light curve data? Spline is derived from 1y of data?
-    B = (10 ** (coszen_spline(coszen)))  / (2 * np.pi) / 2.
+    B = (10 ** (coszen_spline(coszen)))  / (2 * np.pi) 
     
     coszenS = np.cos(utils.dec_to_zen(dec))
     acceptance = 10**coszen_signal_reco_spline(coszenS)
 
     E_ratio = E_spline(coszen, nu['logE'],grid=False)
-    #E_ratio = np.random.uniform(0.5,1.5,size=len(coszen))
-
-    #print "eratio ", E_ratio
-    #print "z ", z, " z_spline ", z_spline(z)
-
+   
     if i%500 == 0:
         print "i ", i
     
-    S = 1./(2.*np.pi*nu['sigma']**2)*np.exp(-GreatCircleDistance(ra, dec, nu['ra'], nu['dec'])**2 / (2.*nu['sigma']**2)) #* acceptance #* z_spline(z) # * E_ratio
+    S = 1./(2.*np.pi*nu['sigma']**2)*np.exp(-GreatCircleDistance(ra, dec, nu['ra'], nu['dec'])**2 / (2.*nu['sigma']**2)) * acceptance
 
-    
-    SoB = S/B * z_spline(z) *E_ratio
+    SoB = S/B #* E_ratio #z_spline(z) *
     
     X = 1./float(len(S)) * (SoB - 1)
     
@@ -172,6 +157,8 @@ def TS(ra, dec, t0, z, lci, nuData, i):
             print "warnflags ", d['warnflag'], d['task'] 
 
     nsMax = x #res.x
+
+    #print "nsMax ", nsMax
     
     ts = -negTS(nsMax,X,S)
 
@@ -208,14 +195,14 @@ def inject(lc,i, nuSignal,gamma, Nsim, dtype):
     
     fname = 'SN_signal/neutrinos_%s_%i.npy'%(SNType,SNid)
     #fname = 'SN_signal/neutrinos_%i.npy'%(SNid)
-
+    #fname = 'SN_signal/SN_neutrinos_fixedPos.npy'
+    
     enSim = []
     sigmaSim = []
     zenSim = []
     aziSim = []
     raSim = []
     timeSim = []
-    #distTrue = []
     weightSim = []
 
     if os.path.exists(fname):
@@ -270,24 +257,34 @@ def inject(lc,i, nuSignal,gamma, Nsim, dtype):
     sim['weight'] = np.zeros_like(weightSim)
 
     sim = np.array( zip(*[sim[ty] for ty in dtype.names]), dtype=dtype)
-
-    print "finished injection"
     
     return sim
 
         
-def simulate(lc, nuData, Nlc):
+def simulate(lc, nuData, Nlc, j=-1):
 
     ts = []
     nmax = []
     
-    print "number of light curve ", Nlc
+    #print "number of light curves ", Nlc
     
     for i in range(Nlc):
+
+        if j>=0:
+            # don't shuffle data in case of signal injection (that will randomize the already injected signal)
+            i=j
+        else:
+            np.random.shuffle(nuData['ra'])
+
         tsi = TS(np.deg2rad(lc['ra'][i]), np.deg2rad(lc['dec'][i]), 
                  lc['t0'][i], lc['z'][i], lc['lcs'][i], nuData, i)
+
         ts.append(tsi[0])
         nmax.append(tsi[1])
+
+        if j>=0:
+            break
+        
     return ts, nmax
     
     
@@ -298,21 +295,16 @@ if __name__ == '__main__':
     # get Data
     lc = readLCCat()
     
-    np.random.shuffle(lc['z'])
+    #np.random.shuffle(lc['z'])
 
     z_hist_BG = np.load('z_hist_BG.npy')
     lc['z'] = np.random.choice(z_hist_BG, size=len(lc['z']))
-
+    #lc['ra'] = np.zeros_like(lc['ra'])
+    #lc['dec'] = np.ones_like(lc['dec'])*15.
+    
     # to make things faster, just select a subset here
-    Nlc = 100 #len(lc['ra'])
-    
-    if nSig>0:
-        Nlc = 500
-        z_hist_sig = np.load('z_hist_signal.npy')
-        lc['z'] = np.random.choice(z_hist_sig, size=len(lc['z']))
-
-        print "%i events will be injected on %i SNe"%(nSig,Nlc)
-    
+    Nlc = 500 #len(lc['ra'])
+       
     nuData = np.load(GFU_path)
     weight = np.ones_like(nuData['ra'])
     nuData = rec_append_fields(nuData, 'weight',
@@ -326,40 +318,12 @@ if __name__ == '__main__':
                                   astro,
                                   dtypes=np.float64)
     
-    # scramble ra
-    #np.random.shuffle(nuData['ra'])
-
     # convert from MJD to JD to be consistent with LC time format, add 1 year to make sure neutrino data and LC overlap in time
     nuData['time'] = nuData['time']+2400000.5+365.*1.5
-    
-    
-    # inject some signal events
-    if nSig>0:
-        print "inject %i signal events "%nSig
-        print "len before merging  ", len(nuData)
-
-        data_all = nuData
-
-        lc_Ibc = utils.selectSNType(lc,"Ibc")
-        
-        # inject the same amount of signal on each SN
-        for i in range(min(Nlc,len(lc_Ibc['ra']))):
-            simEvents = inject(lc_Ibc,i,nuDataSig, settings['gamma'], nSig, nuData.dtype)
-            # merge data (=background) with injected signal events
-            #data_all = simEvents
-            data_all = data_all.copy()
-            old_size = len(data_all)
-            data_all.resize(old_size + len(simEvents))
-            data_all[old_size:] = simEvents
-            print "data_all after merging ", len(data_all)        
-    else:
-        data_all = nuData
-
-    print "data_all after merging ", len(data_all)    
- 
-    #E_spline = np.load('E_spline%s.npy'%spline_name)[()]
+     
+    E_spline = np.load('E_spline%s.npy'%spline_name)[()]
     #E_spline = np.load('Filled_E_spline%s.npy'%spline_name)[()]
-    E_spline = np.load('Nearest_Neighbour_E_spline%s.npy'%spline_name)[()]
+    #E_spline = np.load('Nearest_Neighbour_E_spline%s.npy'%spline_name)[()]
 
     
     coszen_spline = np.load('coszen_spl%s.npy'%spline_name)[()]
@@ -371,14 +335,21 @@ if __name__ == '__main__':
     print('Generating PDFs..Finished')
 
     filename = './output/{}_llh_{}_{:.2f}_{}.npy'.format(addinfo, nSig,
-                                              settings['gamma'],
-                                              jobN)
+                                                         settings['gamma'],
+                                                         jobN)
 
-    print('##############Create BG TS Distrbution##############')
-    if 1:#not os.path.exists(filename):
-        llh_bg_dist, nmax_dist = simulate(lc, data_all, Nlc)#, settings['Nsim'], filename=filename)
-        np.save(filename,llh_bg_dist)
-        np.save(filename.replace('llh','ns'),nmax_dist)
+    filename_BG = './output/{}_llh_{}_{:.2f}_{}.npy'.format(addinfo, 0,
+                                                            settings['gamma'],
+                                                            jobN)
+
+
+    print "filename ", filename
+    
+    if 1:#not os.path.exists(filename_BG):
+        print('##############Create BG TS Distrbution##############')
+        llh_bg_dist, nmax_dist = simulate(lc, nuData, Nlc)
+        np.save(filename_BG,llh_bg_dist)
+        np.save(filename_BG.replace('llh','ns'),nmax_dist)
 
         if PLOT:
             plt.figure()
@@ -387,7 +358,43 @@ if __name__ == '__main__':
             plt.plot(X2, F2)
             plt.xlabel('TS')
             plt.savefig('plots/TSDist_sig%i.png'%nSig)
-    else:
-        print('Load Trials...')
-        llh_bg_dist = np.load(filename)
+    
+    if nSig>0:
+        Nlc = 500
+        print "%i events will be injected on %i SNe"%(nSig,Nlc)
 
+        z_hist_sig = np.load('z_hist_signal.npy')
+        lc['z'] = np.random.choice(z_hist_sig, size=len(lc['z']))
+        #lc['ra'] = np.zeros_like(lc['ra'])
+        #lc['dec'] = np.ones_like(lc['dec'])*15.
+
+        # inject some signal events
+        print "inject %i signal events "%nSig
+        print "len before merging  ", len(nuData)
+
+        lc_Ibc = utils.selectSNType(lc,"Ibc")
+
+        sig_ts_array = []
+        sig_ns_array = []
+            
+        # inject the same amount of signal on each SN
+        for i in range(min(Nlc,len(lc_Ibc['ra']))):
+            np.random.shuffle(nuData['ra'])
+            data_all = nuData
+            
+            simEvents = inject(lc_Ibc,i,nuDataSig, settings['gamma'], nSig, nuData.dtype)
+            # merge data (=background) with injected signal events
+            data_all = data_all.copy()
+            old_size = len(data_all)
+            data_all.resize(old_size + len(simEvents))
+            data_all[old_size:] = simEvents
+            #print "data_all after merging ", len(data_all)        
+            
+            sig_ts, sig_ns = simulate(lc, data_all, Nlc, i)
+            
+            sig_ts_array.append(sig_ts[0])
+            sig_ns_array.append(sig_ns[0])
+            
+        print "save signal trails as ",filename
+        np.save(filename,sig_ts_array)
+        np.save(filename.replace('llh','ns'),sig_ns_array)
