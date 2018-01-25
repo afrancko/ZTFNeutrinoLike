@@ -53,7 +53,14 @@ settings = {'E_reco': 'logE',#'muex',
             'maxDist':np.deg2rad(1800),
             'E_weights': True} 
 
+FIX_POS = True
+DEC = 5
+
 addinfo = 'test'
+
+if FIX_POS:
+    addinfo += '_fix_pos'
+
 
 spline_name = 'spline'
 
@@ -85,6 +92,7 @@ def get_neutrinos(ra, dec, t0, tmax, nuData):
     dist = GreatCircleDistance(nuData['ra'],
                                nuData['dec'],
                                ra, dec)
+    
     mask = dist < settings['maxDist']
     
     nuDataClose = nuData[mask]
@@ -95,10 +103,12 @@ def get_neutrinos(ra, dec, t0, tmax, nuData):
 
     # remove neutrino that are more than 100 days from t0
     maskT0 =  abs(nuDataClose['time'] - t0)<5.
-    maskTmax = ((nuDataClose['time']>(tmax-5)) & (nuDataClose['time']<(tmax+30)))
-    #mask = abs(nuDataClose['time'] - t0)>5. or ((nuDataClose['time'])>(tmax-5) and (nuDataClose['time'])<(tmax+30))
-   
-    nuDataClose = nuDataClose[maskT0]# | maskTmax]
+    #maskTmax = ((nuDataClose['time']>(tmax-5)) & (nuDataClose['time']<(tmax+30)))
+    maskTmax = ((nuDataClose['time']>(t0-5)) & (nuDataClose['time']<(t0+90)))
+
+    #nuDataClose = nuDataClose[maskT0]# | maskTmax]
+    nuDataClose = nuDataClose[maskTmax]
+
     
     if len(nuDataClose) == 0:
         print "no neutrino found within 100 days from t0=%f"%t0
@@ -135,14 +145,15 @@ def TS(ra, dec, t0, z, lci, nuData, i):
     if i%500 == 0:
         print "i ", i
     
-    S = 1./(2.*np.pi*nu['sigma']**2)*np.exp(-GreatCircleDistance(ra, dec, nu['ra'], nu['dec'])**2 / (2.*nu['sigma']**2)) * acceptance
+    S = 1./(2.*np.pi*nu['sigma']**2)*np.exp(-GreatCircleDistance(ra, dec, nu['ra'], nu['dec'])**2 / (2.*nu['sigma']**2)) #* acceptance
 
     SoB = S/B #* E_ratio #z_spline(z) *
     
     X = 1./float(len(S)) * (SoB - 1)
     
     bounds = [(0.,len(nu))]
-    
+    #bounds = [(-len(nu),len(nu))]
+
     x,f,d = scp.optimize.fmin_l_bfgs_b(negTS, 0.1, args=(X,S), bounds=bounds, approx_grad=True, epsilon=1e-8)
 
     #print "warnflags ", d['warnflag'], d['task'] 
@@ -194,8 +205,9 @@ def inject(lc,i, nuSignal,gamma, Nsim, dtype):
     SNid = lc['ID'][i]
     
     fname = 'SN_signal/neutrinos_%s_%i.npy'%(SNType,SNid)
-    #fname = 'SN_signal/neutrinos_%i.npy'%(SNid)
-    #fname = 'SN_signal/SN_neutrinos_fixedPos.npy'
+
+    if FIX_POS:
+        fname = 'SN_signal/SN_neutrinos_fixedPos_dec%i.npy'%DEC
     
     enSim = []
     sigmaSim = []
@@ -215,14 +227,16 @@ def inject(lc,i, nuSignal,gamma, Nsim, dtype):
         
         print "selected %i events in given zenith range"%len(fSource)
         for i in range(len(fSource)):
-            rotatedRa, rotatedDec = utils.rotate(fSource['azimuth'][i],
-                                                 utils.zen_to_dec(fSource['zenith'][i]),
+            rotatedRa, rotatedDec = utils.rotate(fSource['trueAzimuth'][i],
+                                                 utils.zen_to_dec(fSource['trueZenith'][i]),
                                                  raS, decS, 
                                                  fSource[settings['az_reco']][i],
                                                  utils.zen_to_dec(fSource[settings['zen_reco']][i]))
+            #print np.rad2deg(rotatedRa), np.rad2deg(rotatedDec)
             fSource[i][settings['az_reco']] = rotatedRa
             fSource[i][settings['zen_reco']] = utils.dec_to_zen(rotatedDec)
-
+            
+            
         np.save(fname,fSource)
             
             
@@ -295,13 +309,14 @@ if __name__ == '__main__':
     # get Data
     lc = readLCCat()
     
-    #np.random.shuffle(lc['z'])
-
     z_hist_BG = np.load('z_hist_BG.npy')
     lc['z'] = np.random.choice(z_hist_BG, size=len(lc['z']))
-    #lc['ra'] = np.zeros_like(lc['ra'])
-    #lc['dec'] = np.ones_like(lc['dec'])*15.
-    
+
+    if FIX_POS:
+        lc['ra'] = np.zeros_like(lc['ra'])
+        lc['dec'] = np.ones_like(lc['dec'])*DEC
+        addinfo += '_dec%i'%DEC
+        
     # to make things faster, just select a subset here
     Nlc = 500 #len(lc['ra'])
        
@@ -365,8 +380,6 @@ if __name__ == '__main__':
 
         z_hist_sig = np.load('z_hist_signal.npy')
         lc['z'] = np.random.choice(z_hist_sig, size=len(lc['z']))
-        #lc['ra'] = np.zeros_like(lc['ra'])
-        #lc['dec'] = np.ones_like(lc['dec'])*15.
 
         # inject some signal events
         print "inject %i signal events "%nSig
